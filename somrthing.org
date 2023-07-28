@@ -1,0 +1,71 @@
+#+options: ':nil *:t -:t ::t <:t H:3 \n:nil ^:t arch:headline
+#+options: author:t broken-links:nil c:nil creator:nil
+#+options: d:(not "LOGBOOK") date:t e:t email:nil f:t inline:t num:t
+#+options: p:nil pri:nil prop:nil stat:t tags:t tasks:t tex:t
+#+options: timestamp:t title:t toc:t todo:t |:t
+#+title: somrthing
+#+date: <2023-07-25 二>
+#+author:
+#+email: fengyi@fengyi
+#+language: en
+#+select_tags: export
+#+exclude_tags: noexport
+#+creator: Emacs 28.2 (Org mode 9.5.5)
+#+cite_export:
+#+OPTIONS: ^:ni
+* 近期任务  
+** TSR拆解SSR
+*** Camera
+**** XH8_BSW_TSR_126
+- 确认正确开启内部功能安全机制
+- 读取摄像头反馈的故障信息
+- 正确上报应用层
+***** MAX96755
+共有33个功能安全机制
+| ID   | Description                                                                                                                                               | Fault_to_be_detected                                      | illustrate                                                              |
+|------+-----------------------------------------------------------------------------------------------------------------------------------------------------------+-----------------------------------------------------------+-------------------------------------------------------------------------|
+| SM1  | BIST_for_Serial_Link(内置PRBS用于检查全双工穿行链路正/反向BER误码率)                                                                                      | 数据损坏-Video_Channel,Bit_Error_Rate,Link_Issues         | 串化GEN,解串Check。需要写寄存器来开启检测                               |
+| SM2  | Line_fault_detection_on_Serializer_Output(检测到TX+/-的线路故障，问题标记于LFLTB引脚)                                                                     | 穿行链路输出线路故障（对bat/地短路、开路）                | 755_Pin32_LMN1连接到了SIOA,但是电阻NI（0x1A 0x1B 0x26 0x27）            |
+| SM3  | CRC_for_Control_Channel(前向反向控制通道的CRC,16bit数据包CRC。UART/I2C/SPI/GPIO)                                                                          | 控制通道上的数据损坏                                      | 0xA0 0xF0                                                               |
+| SM4  | CRC_for_Control_Channal(32bit视频行CRC和16bit数据包CRC)                                                                                                   | 前向视频通道的数据损坏                                    | 0x50 0x54 0x54 0x5c 需要解串方也要开启，鉴于目前755方案我们应该决定不了 |
+| SM5  | Error_Correction_through_Re-transmission_on_Control_Channel(控制信号在前向反向模式，最多可以纠正每个数据包16bit错误)                                      | 出现1.错误的CRC2.丢弃额度packet的时候进行重传             | 0x1C 0x1D 0x8E 0x8F 0xA6 0xA7 0xAE 0xAF                                 |
+| SM6  | LOCK_indicator_of_Forward_Channel(出现时序错误或者解串侧没有锁定，拉高LOCK引脚)                                                                           | PLL Lock error、Timing errors                             | 755_Pin2_LOCK 电路已连，目前未实现相关控制检测                          |
+| SM7  | ERRB_indicator_of_Forward_Channel(出现CRC错误时，解串ERRB输出翻转)                                                                                        | 前向数据传输错误                                          | 对解串提出的要求，鉴于目前方案无法实施                                  |
+| SM8  | LOCK_indicator_of_Reverse_Channel(在反向通道连续模式出现timing错误时，LOCK pin拉高)                                                                       | PLL Lock error、Timing errors                             | 没看懂                                                                  |
+| SM9  | ERRB_indicator_of_Reverse_Channel(ERRB引脚在反向数据传输错误时拉高)                                                                                       | 反向数据传输错误                                          | 没找到对应寄存器相关内容                                                |
+| SM10 | Error_generator(串行器侧故障注入发生器)                                                                                                                   | CRC生成器错误                                             | 0x29 0x2A 0x190                                                         |
+| SM11 | Video_Sequence_Number(一个交替的1bit视频数据包序列号来检测丢失的视频数据包并进行填充以维持连续性。错误将通过 CRC 进行标记。 该序列号对于控制通道也有效。) | 丢弃的视频/控制packet                                     | 未找到明确相关寄存器                                                    |
+| SM12 | Acknowledge_of_UART_or_I2C                                                                                                                                | 节点故障                                                  | ARQ0相关寄存器、0x8D                                                    |
+| SM13 | Watermark_Detector_and_Watermark_Generator(水印序列在串行器/解串器处生成，于解串器/串行器处评估)                                                          | Frozen Frame冻结帧（介于生成端于检测端的）                | 0x1C 0x1D 0x190 0x192 0x194 0x195 0x1AE 0x1AF                           |
+| SM14 | Eye_Opening_Monitor(测量链路余量，于误码率直接相关SM1)                                                                                                    | 丢失lock、电缆信号完整性                                  | 0x1C 0x1D 0x1404~0x1407 0x1434~0x143B                                   |
+| SM15 | Overvoltage/Undervoltage(通过寄存器进行内部电压测量：VDD VDDIO VDD18 OV UV)                                                                               | 报告过压、欠压状况                                        | 0x1C 0x1D 0x56C 0x1458~0x1459                                           |
+| SM16 | Evaluate_MIPI_ECC/CRC(评估MIPI ECC/CRC并设置相关寄存器)                                                                                                   | 接受的图像数据损坏                                        | 0x1F 0x3A0 0x3A2 0x389 0x399                                            |
+| SM17 | FIFO_Overflow_Detection                                                                                                                                   | Over flow in frame buffer                                 | 0x102 0x10A 0x112 0x11A                                                 |
+| SM18 | Register_Reading_for_Line_Fault/ERRB/LOCK_through_I2C/UART                                                                                                | 除引脚外，LFLT/ERRB/LOCK 的状态通过冗余寄存器读数进行验证 | LFLT:0x1A 0x1B ERRB:0x1f相关 LOCK:0x13                                  |
+| SM19 | Packet_Counter_for_GPIO/I2C/SPI/UART_packets                                                                                                              | 数据包计数                                                | 0x23                                                                    |
+| SM20 | 9b/10b_illegal_symbol_check,running_disparity                                                                                                             | 9b/10b解码器非法符号检查                                  | 和解串相关                                                              |
+| SM21 | Clock_Monitor:150_MHz_clock_compared_against_crystal_clock,leading_to_LOCK_error                                                                          | 150MHz时钟与晶振时钟进行比较                              | 未见相关寄存器                                                          |
+| SM22 | CRC_on_configuration_data_for_data_retention_memory                                                                                                       | 保留存储器上的数据受CRC保护                               | 应该不用管                                                              |
+| SM23 | Start_Stop_Verification_on_I2C                                                                                                                            | I2C总线有开始/结束确认                                    | 应该不用管                                                              |
+| SM24 | Redunant_OTP_memory                                                                                                                                       | 配置寄存器的OTP存储器，完全冗余                           | 不用管                                                                  |
+| SM25 | Video_Detect                                                                                                                                              | 当检测到有效视频信号，控制器进行确认                      | 0x102系列 0x380 0x390 0x55D~0x56A                                       |
+| SM26 | PRBS_Synchronization_and_Validation                                                                                                                       | 既有PRBS同步也有验证                                      | 0x29 0x1E5系列                                                          |
+| SM27 | Readback_of_status_register_informing_on_ARQ_retrials                                                                                                     | 保存在状态寄存器内的ARQ重试次数                           | ARQ系列寄存器                                                           |
+| SM28 | Dual_View_Memory_Integrity_Check                                                                                                                          | 比较读写数据差异，通过终端引脚报告错误                    | 不用管                                                                  |
+| SM29 | Verification_of_info_Frame                                                                                                                                | 定期发送信息帧，并在接收端进行检查，CRC 受保护            | 不知道                                                                  |
+| SM30 | Overflow/Underflow_Detection_on_RGMII                                                                                                                     | 有RGMII溢出和下溢检测                                     | 不用管                                                                  |
+| SM31 | Video_Lock                                                                                                                                                | 除了Link_LOCK之外还有Video_LOCK                           | 0x102系列                                                               |
+| SM32 | Readback_of_Logic_State_for_GPIO                                                                                                                          | GPIO状态可通过I2C回读                                     | 应该不用管                                                              |
+| SM33 | GPIO_open_detection                                                                                                                                       | 通过内部上拉和下拉程序依次检测 GPIO 是否打开              | 应该不用管                                                              |
+
+***** MAX96722
+**** XH8_BSW_TSR_127
+**** XH8_BSW_TSR_128
+**** XH8_BSW_TSR_129
+**** XH8_BSW_TSR_130
+*** IMU
+*** X9U内部通讯
+** 9295E输出MIPI数据
+** reboot soc问题排查
+
+
